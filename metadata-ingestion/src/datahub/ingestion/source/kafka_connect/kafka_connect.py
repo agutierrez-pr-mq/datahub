@@ -198,7 +198,9 @@ class KafkaConnectSource(StatefulIngestionSourceBase):
                 # like transform_plugins does at import instead of failing the
                 # source. ValueError covers jpype's JVMNotFoundException.
                 logger.warning(
-                    f"Could not start a JVM: {e}. RegexRouter transforms will be skipped."
+                    f"Could not start a JVM: {e}. Regex-based topic routing "
+                    "transforms (RegexRouter, Debezium logical topic router) "
+                    "will be skipped."
                 )
 
     def _create_catalog(self) -> Optional[ConnectorCatalog]:

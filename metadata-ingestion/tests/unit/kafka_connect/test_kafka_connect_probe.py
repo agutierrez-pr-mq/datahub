@@ -8,12 +8,6 @@ import re
 from typing import Dict, Iterable, List, Tuple
 from unittest import mock
 
-# jpype.imports must precede the kafka_connect modules: transform_plugins
-# imports java.util.regex at import time, which only resolves once it is
-# loaded. Run alone, this file would otherwise switch RegexRouter support off
-# for the whole process.
-import jpype
-import jpype.imports  # noqa: F401
 import pytest
 import requests
 import requests_mock
@@ -41,6 +35,7 @@ from datahub.ingestion.source.kafka_connect.kafka_connect_probe import (
     DISCLOSED_CONFIG_KEYS,
     PROBE_REQUEST_TIMEOUT_SECONDS,
     KafkaConnectMetadataProbe,
+    disclosed_config,
     source_for_probe,
 )
 from datahub.metadata.schema_classes import DataJobInputOutputClass
@@ -559,6 +554,19 @@ def test_no_disclosed_key_names_a_credential() -> None:
         assert not any(mk in lowered for mk in ingestion_markers), key
     # Credential-bearing by value, not by name.
     assert not {"connection.url", "connection.uri", "query"} & DISCLOSED_CONFIG_KEYS
+
+
+def test_a_logical_topic_routers_rule_is_disclosed_but_not_its_key_options() -> None:
+    # Lineage renames the topic from topic.regex / topic.replacement; the
+    # router's key.* options only change the message key.
+    routing = {
+        "transforms": "Reroute",
+        "transforms.Reroute.type": "io.debezium.transforms.ByLogicalTableRouter",
+        "transforms.Reroute.topic.regex": "(.*)customers_shard(.*)",
+        "transforms.Reroute.topic.replacement": "$1customers_all_shards",
+    }
+    key_options = {"transforms.Reroute.key.field.regex": "(.*)customers_shard(.*)"}
+    assert disclosed_config({**routing, **key_options}) == routing
 
 
 def test_a_connector_deleted_after_listing_is_a_bad_argument() -> None:

@@ -6,7 +6,7 @@ Use the **Important Capabilities** table above as the source of truth for suppor
 
 **✅ Fully Supported:**
 
-- **Any combination of transforms**: RegexRouter, EventRouter, and non-routing transforms
+- **Any combination of transforms**: RegexRouter, EventRouter, the Debezium logical topic router, and non-routing transforms
 - **Complex transform chains**: Multiple chained transforms automatically handled
 - **Both environments**: Self-hosted and Confluent Cloud work identically
 - **Future-proof**: New transform types automatically supported
@@ -266,6 +266,9 @@ DataHub uses an **advanced transform pipeline strategy** that automatically hand
 - **RegexRouter**: `org.apache.kafka.connect.transforms.RegexRouter`
 - **Cloud RegexRouter**: `io.confluent.connect.cloud.transforms.TopicRegexRouter`
 - **Debezium EventRouter**: `io.debezium.transforms.outbox.EventRouter` (Outbox pattern)
+- **Debezium logical topic router**: `io.debezium.transforms.ByLogicalTableRouter` and `io.debezium.transforms.ToLogicalTopicRouter` (its Debezium 3.7+ name, and the only one Confluent Cloud's managed connectors accept). A topic is renamed only when `topic.regex` matches the whole name; several source tables can map to one topic.
+
+SMT predicates (`transforms.<name>.predicate` and `negate`) are not evaluated: a routing transform is applied to every topic it matches.
 
 ##### Non-Topic Routing Transforms
 

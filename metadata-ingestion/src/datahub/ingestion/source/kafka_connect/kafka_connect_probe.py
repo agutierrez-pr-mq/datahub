@@ -164,6 +164,9 @@ DISCLOSED_TRANSFORM_PROPERTIES: FrozenSet[str] = frozenset(
         "route.by.field",
         "route.topic.regex",
         "route.topic.replacement",
+        # Debezium ByLogicalTableRouter / ToLogicalTopicRouter
+        "topic.regex",
+        "topic.replacement",
     }
 )
 
