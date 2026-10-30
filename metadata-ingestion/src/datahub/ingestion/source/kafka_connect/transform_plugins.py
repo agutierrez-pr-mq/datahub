@@ -184,6 +184,75 @@ class RegexRouterPlugin(TransformPlugin):
         return True  # RegexRouter transforms are predictable and safe to apply
 
 
+class DebeziumLogicalTopicRouterPlugin(TransformPlugin):
+    """
+    Plugin for Debezium's logical topic router.
+
+    Routes records from several physical tables (e.g. shards) into one logical
+    topic. Topic renaming follows Debezium's implementation exactly: the topic
+    is rewritten only when ``topic.regex`` matches the *whole* topic name, using
+    ``replaceFirst`` with ``topic.replacement``. A non-matching topic, or a
+    replacement that yields an empty string, leaves the topic unchanged.
+
+    The router's key options (``key.enforce.uniqueness``, ``key.field.*``) change
+    the message key, not the topic name, so they are ignored here.
+    """
+
+    SUPPORTED_TYPES = {
+        # Deprecated name, still the most common in existing configs
+        "io.debezium.transforms.ByLogicalTableRouter",
+        # Replacement class in newer Debezium releases
+        "io.debezium.transforms.ToLogicalTopicRouter",
+    }
+
+    @classmethod
+    def supports_transform_type(cls, transform_type: str) -> bool:
+        return transform_type in cls.SUPPORTED_TYPES
+
+    def apply_forward(self, topics: List[str], config: TransformConfig) -> List[str]:
+        if not JAVA_REGEX_AVAILABLE:
+            raise ValueError(
+                "Debezium logical topic router requires JPype and JVM. "
+                "Install with: pip install 'acryl-datahub[kafka-connect]'"
+            )
+
+        regex_pattern = config.config.get("topic.regex", "")
+        replacement = config.config.get("topic.replacement")
+
+        if not regex_pattern or replacement is None:
+            logger.warning(
+                f"Logical topic router {config.name} missing topic.regex or "
+                f"topic.replacement"
+            )
+            return topics
+
+        pattern = JavaPattern.compile(regex_pattern)
+        transformed_topics = []
+        for topic in topics:
+            matcher = pattern.matcher(topic)
+            if not matcher.matches():
+                transformed_topics.append(topic)
+                continue
+
+            new_topic = str(matcher.replaceFirst(replacement))
+            if not new_topic:
+                # Debezium propagates the original record in this case
+                transformed_topics.append(topic)
+                continue
+
+            logger.info(
+                f"Logical topic router {config.name} transformed: "
+                f"'{topic}' -> '{new_topic}'"
+            )
+            transformed_topics.append(new_topic)
+
+        return transformed_topics
+
+    @classmethod
+    def should_apply_automatically(cls) -> bool:
+        return True  # Deterministic regex rename, same as RegexRouter
+
+
 class ComplexTransformPlugin(TransformPlugin):
     """Plugin for complex transforms that require explicit configuration."""
 
@@ -251,6 +320,7 @@ class TransformPluginRegistry:
     def _register_default_plugins(self):
         """Register default transform plugins."""
         self.register(RegexRouterPlugin())
+        self.register(DebeziumLogicalTopicRouterPlugin())
         self.register(ComplexTransformPlugin())
         self.register(ReplaceFieldPlugin())
 

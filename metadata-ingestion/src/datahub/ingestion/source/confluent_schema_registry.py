@@ -128,6 +128,11 @@ class ConfluentSchemaRegistry(KafkaSchemaRegistryBase):
         #  (c) TopicNameStrategy differing by environment name suffixes.
         #       e.g "a.b.c.d-value" and "a.b.c.d.qa-value"
         #       For such instances, the wrong schema registry entries could picked by the previous logic.
+        # An exact TopicNameStrategy subject always wins. Otherwise a topic that is a
+        # prefix of another (`orders` vs `orders_archive`) can pick up the other
+        # topic's `<topic>-value` subject through the TopicRecordNameStrategy match.
+        if subject_key in self.known_schema_registry_subjects:
+            return subject_key
         for subject in self.known_schema_registry_subjects:
             if (
                 self.source_config.disable_topic_record_naming_strategy

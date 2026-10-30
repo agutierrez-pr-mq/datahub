@@ -266,6 +266,7 @@ DataHub uses an **advanced transform pipeline strategy** that automatically hand
 - **RegexRouter**: `org.apache.kafka.connect.transforms.RegexRouter`
 - **Cloud RegexRouter**: `io.confluent.connect.cloud.transforms.TopicRegexRouter`
 - **Debezium EventRouter**: `io.debezium.transforms.outbox.EventRouter` (Outbox pattern)
+- **Debezium logical topic router**: `io.debezium.transforms.ByLogicalTableRouter` and its replacement `io.debezium.transforms.ToLogicalTopicRouter` (uses `topic.regex` / `topic.replacement`; several source tables can map to one topic)
 
 ##### Non-Topic Routing Transforms
 
