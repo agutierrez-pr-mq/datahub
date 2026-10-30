@@ -167,6 +167,54 @@ class ConfluentSchemaRegistryTest(unittest.TestCase):
         assert any("id" in name for name in field_names)
         assert any("name" in name for name in field_names)
 
+    def _registry_with_subjects(self, subjects, **config):
+        kafka_source_config = KafkaSourceConfig.model_validate(
+            {
+                "connection": {
+                    "bootstrap": "localhost:9092",
+                    "schema_registry_url": "http://localhost:8081",
+                },
+                **config,
+            }
+        )
+        with patch(
+            "datahub.ingestion.source.confluent_schema_registry.SchemaRegistryClient"
+        ) as mock_client_cls:
+            mock_client_cls.return_value.get_subjects.return_value = subjects
+            return ConfluentSchemaRegistry.create(
+                kafka_source_config, KafkaSourceReport()
+            )
+
+    def test_exact_topic_subject_wins_over_prefix_collision(self):
+        # `cdc-card` is a prefix of `cdc-cardholder`, listed first by the registry.
+        registry = self._registry_with_subjects(
+            [
+                "cdc-cardholder-value",
+                "cdc-cardholder-key",
+                "cdc-card-value",
+                "cdc-card-key",
+            ]
+        )
+
+        assert (
+            registry._get_subject_for_topic("cdc-card", is_key_schema=False)
+            == "cdc-card-value"
+        )
+        assert (
+            registry._get_subject_for_topic("cdc-card", is_key_schema=True)
+            == "cdc-card-key"
+        )
+
+    def test_topic_record_name_strategy_subject_still_matches(self):
+        registry = self._registry_with_subjects(
+            ["cdc-card-com.example.Card-value", "cdc-cardholder-value"]
+        )
+
+        assert (
+            registry._get_subject_for_topic("cdc-card", is_key_schema=False)
+            == "cdc-card-com.example.Card-value"
+        )
+
     def test_init_subjects_connectivity_failure_is_reported(self):
         kafka_source_config = KafkaSourceConfig.model_validate(
             {
