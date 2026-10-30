@@ -5166,7 +5166,10 @@ class TestFineGrainedLineageWithReplaceField:
                 "database.dbname": "testdb",
                 "table.include.list": "public.users",
                 "database.server.name": "testserver",
-                "transforms": "dropPassword",
+                # Debezium values are envelopes; ReplaceField sees row columns
+                # only after the envelope is unwrapped.
+                "transforms": "unwrap,dropPassword",
+                "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
                 "transforms.dropPassword.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
                 "transforms.dropPassword.exclude": "password",
             },
@@ -5230,7 +5233,10 @@ class TestFineGrainedLineageWithReplaceField:
                 "database.dbname": "testdb",
                 "table.include.list": "public.users",
                 "database.server.name": "testserver",
-                "transforms": "keepOnly",
+                # Debezium values are envelopes; ReplaceField sees row columns
+                # only after the envelope is unwrapped.
+                "transforms": "unwrap,keepOnly",
+                "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
                 "transforms.keepOnly.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
                 "transforms.keepOnly.include": "id,username,email",
             },
@@ -5294,7 +5300,10 @@ class TestFineGrainedLineageWithReplaceField:
                 "database.dbname": "testdb",
                 "table.include.list": "public.users",
                 "database.server.name": "testserver",
-                "transforms": "renameFields",
+                # Debezium values are envelopes; ReplaceField sees row columns
+                # only after the envelope is unwrapped.
+                "transforms": "unwrap,renameFields",
+                "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
                 "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
                 "transforms.renameFields.renames": "user_id:id,user_name:name",
             },
@@ -5358,7 +5367,10 @@ class TestFineGrainedLineageWithReplaceField:
                 "database.dbname": "testdb",
                 "table.include.list": "public.users",
                 "database.server.name": "testserver",
-                "transforms": "dropSensitive,renameFields",
+                # Debezium values are envelopes; ReplaceField sees row columns
+                # only after the envelope is unwrapped.
+                "transforms": "unwrap,dropSensitive,renameFields",
+                "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
                 "transforms.dropSensitive.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
                 "transforms.dropSensitive.exclude": "password,ssn",
                 "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",

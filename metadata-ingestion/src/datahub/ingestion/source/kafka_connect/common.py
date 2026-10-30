@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
 )
 
 from pydantic import model_validator
@@ -128,6 +129,21 @@ KNOWN_TOPIC_ROUTING_TRANSFORMS: Final[List[str]] = [
 DEBEZIUM_CONNECTORS_WITH_2_LEVEL_CONTAINER: Final[set] = {
     "io.debezium.connector.sqlserver.SqlServerConnector",
 }
+
+# Relational Debezium source connectors wrap each row in an envelope
+# ({before, after, source, op, ts_ms}); table columns land under `after.`.
+# MongoDB (after is a JSON string) and the JDBC sink are excluded.
+DEBEZIUM_RELATIONAL_SOURCE_PREFIX: Final[str] = "io.debezium.connector."
+DEBEZIUM_NON_ENVELOPE_CONNECTOR_PREFIXES: Final[Tuple[str, ...]] = (
+    "io.debezium.connector.mongodb.",
+    "io.debezium.connector.jdbc.",
+)
+DEBEZIUM_ENVELOPE_AFTER_FIELD: Final[str] = "after"
+
+# SMTs that replace the Debezium envelope with the `after` row state
+DEBEZIUM_UNWRAP_TRANSFORMS: Final[Tuple[str, ...]] = (
+    "io.debezium.transforms.ExtractNewRecordState",
+)
 
 
 # Confluent Cloud connector class names
@@ -1084,20 +1100,29 @@ class BaseConnector:
             return []
 
     def _apply_field_transforms(
-        self, source_columns: List[str]
+        self,
+        source_columns: List[str],
+        initial_mapping: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, Optional[str]]:
         """Apply field-level SMT transforms to a column mapping (source → target name).
 
         Handles ReplaceField (include/exclude/rename), ExtractField (unwrap a nested
-        struct), and HoistField (wrap all fields under a new struct field).
+        struct), HoistField (wrap all fields under a new struct field), and Debezium's
+        ExtractNewRecordState (unwrap the change-event envelope).
+        `initial_mapping` overrides the identity starting point, e.g. to place source
+        columns under a Debezium envelope's `after.` struct before transforms run.
         Returns a dict mapping each source column to its target name, or None if dropped.
         """
+        column_mapping: Dict[str, Optional[str]] = (
+            dict(initial_mapping)
+            if initial_mapping is not None
+            else {col: col for col in source_columns}
+        )
         transforms_config = self.connector_manifest.config.get("transforms", "")
         if not transforms_config:
-            return {col: col for col in source_columns}
+            return column_mapping
 
         transform_names = parse_comma_separated_list(transforms_config)
-        column_mapping: Dict[str, Optional[str]] = {col: col for col in source_columns}
 
         for transform_name in transform_names:
             transform_type = self.connector_manifest.config.get(
@@ -1123,6 +1148,12 @@ class BaseConnector:
             ):
                 column_mapping = self._apply_extract_field(
                     column_mapping, transform_cfg
+                )
+            elif transform_type in DEBEZIUM_UNWRAP_TRANSFORMS:
+                # Promotes `after.*` to the top level, like ExtractField(field=after).
+                # Fields added via `add.fields` are metadata, not source columns.
+                column_mapping = self._apply_extract_field(
+                    column_mapping, {"field": DEBEZIUM_ENVELOPE_AFTER_FIELD}
                 )
             elif transform_type in (
                 "org.apache.kafka.connect.transforms.HoistField$Value",
@@ -1212,6 +1243,41 @@ class BaseConnector:
             for col, target in column_mapping.items()
         }
 
+    def _emits_debezium_envelope(self) -> bool:
+        """True when topic values are Debezium change-event envelopes.
+
+        Relational Debezium sources nest row columns under `after`. The
+        ExtractNewRecordState SMT (handled in `_apply_field_transforms`) unwraps it.
+        """
+        connector_class = self.connector_manifest.config.get(CONNECTOR_CLASS, "")
+        return connector_class.startswith(
+            DEBEZIUM_RELATIONAL_SOURCE_PREFIX
+        ) and not connector_class.startswith(DEBEZIUM_NON_ENVELOPE_CONNECTOR_PREFIXES)
+
+    def _get_topic_field_paths(self, topic_urn: str) -> Optional[Dict[str, str]]:
+        """Map simple dot paths to the topic's stored field paths.
+
+        Returns None when the topic has no schema in DataHub, so callers can fall
+        back to simple paths. Value fields win over key fields with the same simple
+        path, and the first field wins among union variants (the union parent).
+        """
+        graph = self.schema_resolver.graph if self.schema_resolver else None
+        if graph is None:
+            return None
+        schema = graph.get_aspect(topic_urn, SchemaMetadataClass)
+        if not isinstance(schema, SchemaMetadataClass) or not schema.fields:
+            return None
+
+        value_paths: Dict[str, str] = {}
+        key_paths: Dict[str, str] = {}
+        for schema_field in schema.fields:
+            field_path = schema_field.fieldPath
+            simple_path = get_simple_field_path_from_v2_field_path(field_path)
+            is_key = schema_field.isPartOfKey or "[key=True]" in field_path
+            target = key_paths if is_key else value_paths
+            target.setdefault(simple_path, field_path)
+        return {**key_paths, **value_paths}
+
     def _extract_fine_grained_lineage(
         self,
         source_dataset: str,
@@ -1279,7 +1345,26 @@ class BaseConnector:
                 platform_instance=kafka_platform_instance,
             )
 
-            column_mapping = self._apply_field_transforms(list(source_schema.keys()))
+            source_columns = list(source_schema.keys())
+            initial_mapping: Optional[Dict[str, Optional[str]]] = None
+            if self._emits_debezium_envelope():
+                initial_mapping = {
+                    col: f"{DEBEZIUM_ENVELOPE_AFTER_FIELD}.{col}"
+                    for col in source_columns
+                }
+            column_mapping = self._apply_field_transforms(
+                source_columns, initial_mapping
+            )
+
+            # Map simple paths onto the topic's real (usually v2) field paths so the
+            # downstream schemaField URNs point at fields that exist on the topic.
+            topic_field_paths = self._get_topic_field_paths(str(target_urn))
+            topic_field_paths_lower: Dict[str, str] = (
+                {k.lower(): v for k, v in topic_field_paths.items()}
+                if topic_field_paths is not None
+                else {}
+            )
+            missing_in_topic: List[str] = []
 
             # Create fine-grained lineage for each source column
             fine_grained_lineages: List[FineGrainedLineageClass] = []
@@ -1287,12 +1372,21 @@ class BaseConnector:
             for source_col in source_schema:
                 target_col = column_mapping.get(source_col)
 
-                # Skip if field was dropped by ReplaceField transform
+                # Skip if field was dropped by a transform
                 if target_col is None:
                     logger.debug(
-                        f"Skipping column '{source_col}' - dropped by ReplaceField transform"
+                        f"Skipping column '{source_col}' - dropped by a field transform"
                     )
                     continue
+
+                if topic_field_paths is not None:
+                    resolved = topic_field_paths.get(
+                        target_col
+                    ) or topic_field_paths_lower.get(target_col.lower())
+                    if resolved is None:
+                        missing_in_topic.append(target_col)
+                        continue
+                    target_col = resolved
 
                 fine_grained_lineage = FineGrainedLineageClass(
                     upstreamType=FineGrainedLineageUpstreamTypeClass.FIELD_SET,
@@ -1301,6 +1395,16 @@ class BaseConnector:
                     downstreams=[make_schema_field_urn(str(target_urn), target_col)],
                 )
                 fine_grained_lineages.append(fine_grained_lineage)
+
+            if missing_in_topic:
+                # Usually a stale or mismatched topic schema (e.g. the Kafka source
+                # picked another topic's schema-registry subject).
+                self.report.warning(
+                    message="Source columns not found in Kafka topic schema — column-level lineage skipped for them",
+                    context=f"connector={self.connector_manifest.name}, source={source_dataset}, "
+                    f"target={target_dataset}, missing={len(missing_in_topic)}/{len(source_columns)}, "
+                    f"sample={missing_in_topic[:5]}",
+                )
 
             if fine_grained_lineages:
                 logger.debug(
