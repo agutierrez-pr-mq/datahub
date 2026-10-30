@@ -74,6 +74,10 @@ source:
       "my_topic_2-value": "io.acryl.Schema3"
 ```
 
+Without a `topic_subject_map` entry, a topic uses its `<topic>-key` / `<topic>-value` subject. If that subject is missing, it falls back to the first subject that starts with `<topic>-` and ends in `-key` / `-value`, such as `<topic>-<record name>-value`, unless `disable_topic_record_naming_strategy` is set. Confluent's own TopicRecordNameStrategy registers `<topic>-<record name>` with no `-key` / `-value` suffix, so map those subjects with `topic_subject_map`.
+
+A topic with no subject of its own can still pick up the subject of a topic whose name continues with `-`: `orders` gets `orders-archive-value`. If the topic's schema is registered under another subject, map it with `topic_subject_map`. If the topic has no schema, there is no per-topic way to stop this. Set `disable_topic_record_naming_strategy: true`, which turns the fallback off for every topic, but only if you don't use TopicRecordNameStrategy.
+
 #### Confluent Cloud Stream Catalog
 
 On Confluent Cloud, tags and business metadata curated in Stream Governance are held in the

@@ -123,21 +123,32 @@ class ConfluentSchemaRegistry(KafkaSchemaRegistryBase):
 
         # Subject name format when the schema registry subject name strategy is
         #  (a) TopicNameStrategy(default strategy): <topic name>-<key/value>
-        #  (b) TopicRecordNameStrategy: <topic name>-<fully-qualified record name>-<key/value>
-        #  there's a third case
-        #  (c) TopicNameStrategy differing by environment name suffixes.
-        #       e.g "a.b.c.d-value" and "a.b.c.d.qa-value"
-        #       For such instances, the wrong schema registry entries could picked by the previous logic.
+        #  (b) TopicRecordNameStrategy: <topic name>-<fully-qualified record name>
+        #       The fallback below only matches it with a key/value suffix:
+        #       <topic name>-<fully-qualified record name>-<key/value>. Confluent's
+        #       own unsuffixed subjects need topic_subject_map.
+        # Other topics' subjects often start with this topic's name too:
+        #  (c) TopicNameStrategy differing by environment name suffixes,
+        #       e.g. "a.b.c.d-value" and "a.b.c.d.qa-value"
+        #  (d) topics whose names extend this one, e.g. "orders" and "orders_archive-value"
+        # So the exact subject from (a) wins, and the fallback for (b) requires the "-"
+        # after the topic name. Otherwise the subject picked depends on the order the
+        # registry lists subjects. A topic with no subject of its own can still match a
+        # "-" sibling ("orders" and "orders-archive-value"); topic_subject_map or
+        # disable_topic_record_naming_strategy avoids it.
+        if subject_key in self.known_schema_registry_subjects:
+            return subject_key
+
+        if self.source_config.disable_topic_record_naming_strategy:
+            return None
+
+        record_name_prefix: str = topic + "-"
         for subject in self.known_schema_registry_subjects:
+            # A record name can't be empty: "orders--value" belongs to topic "orders-".
             if (
-                self.source_config.disable_topic_record_naming_strategy
-                and subject == subject_key
-            ):
-                return subject
-            if (
-                (not self.source_config.disable_topic_record_naming_strategy)
-                and subject.startswith(topic)
+                subject.startswith(record_name_prefix)
                 and subject.endswith(subject_key_suffix)
+                and len(subject) > len(record_name_prefix) + len(subject_key_suffix)
             ):
                 return subject
         return None
