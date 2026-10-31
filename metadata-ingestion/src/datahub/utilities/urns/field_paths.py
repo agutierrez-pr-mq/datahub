@@ -1,3 +1,9 @@
+import re
+
+# [...] tokens may contain dots, e.g. [type=com.example.Order]
+_V2_PATH_TOKEN_RE = re.compile(r"\[[^\]]*\](?=\.|$)|[^.]+")
+
+
 def get_simple_field_path_from_v2_field_path(field_path: str) -> str:
     """A helper function to extract simple . path notation from the v2 field path"""
 
@@ -5,7 +11,7 @@ def get_simple_field_path_from_v2_field_path(field_path: str) -> str:
         # this is a v2 field path
         tokens = [
             t
-            for t in field_path.split(".")
+            for t in _V2_PATH_TOKEN_RE.findall(field_path)
             if not (t.startswith("[") or t.endswith("]"))
         ]
         path = ".".join(tokens)

@@ -11,23 +11,10 @@ from datahub.emitter.mce_builder import dataset_urn_to_key, schema_field_urn_to_
 from datahub.ingestion.graph.client import DataHubGraph, get_default_graph
 from datahub.ingestion.graph.config import ClientMode
 from datahub.upgrade import upgrade
+from datahub.utilities.urns.field_paths import get_simple_field_path_from_v2_field_path
 from datahub.utilities.urns.urn import Urn
 
 logger = logging.getLogger(__name__)
-
-
-def pretty_field_path(field_path: str) -> str:
-    if not field_path.startswith("[version=2.0]"):
-        return field_path
-        # breakpoint()
-        # parse schema field
-    tokens = [
-        t
-        for t in field_path.split(".")
-        if not t.startswith("[") and not t.endswith("]")
-    ]
-
-    return ".".join(tokens)
 
 
 def pretty_id(id: Optional[str]) -> str:
@@ -43,9 +30,9 @@ def pretty_id(id: Optional[str]) -> str:
             assert schema_field_key is not None
             field_path = schema_field_key.fieldPath
 
-            return f"{click.style('field', fg='cyan')}:{click.style(pretty_field_path(field_path), fg='white')}"
+            return f"{click.style('field', fg='cyan')}:{click.style(get_simple_field_path_from_v2_field_path(field_path), fg='white')}"
     if id.startswith("[version=2.0]"):
-        return f"{click.style('field', fg='cyan')}:{click.style(pretty_field_path(id), fg='white')}"
+        return f"{click.style('field', fg='cyan')}:{click.style(get_simple_field_path_from_v2_field_path(id), fg='white')}"
 
     if id.startswith("urn:li:dataset"):
         dataset_key = dataset_urn_to_key(id)
