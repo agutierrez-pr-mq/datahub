@@ -3,6 +3,8 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+import pytest
+
 from datahub.ingestion.source.kafka_connect.common import (
     ConnectorManifest,
     KafkaConnectSourceConfig,
@@ -337,7 +339,61 @@ class TestSchemaResolverFineGrainedLineage:
 
         assert result is None
 
-    def test_fine_grained_lineage_generation(self):
+    @pytest.mark.parametrize(
+        "connector_class,transforms,expected_downstreams",
+        [
+            (
+                "io.debezium.connector.postgresql.PostgresConnector",
+                {},
+                ["after.id", "after.username", "after.email", "after.created_at"],
+            ),
+            (
+                "io.debezium.connector.postgresql.PostgresConnector",
+                {
+                    "transforms": "unwrap",
+                    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+                },
+                ["id", "username", "email", "created_at"],
+            ),
+            (
+                "io.debezium.connector.postgresql.PostgresConnector",
+                {
+                    "transforms": "unwrap",
+                    "transforms.unwrap.type": "org.apache.kafka.connect.transforms.ExtractField$Value",
+                    "transforms.unwrap.field": "after",
+                },
+                ["id", "username", "email", "created_at"],
+            ),
+            (
+                # Without an unwrap, ReplaceField only sees the envelope's fields.
+                "io.debezium.connector.postgresql.PostgresConnector",
+                {
+                    "transforms": "drop",
+                    "transforms.drop.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+                    "transforms.drop.exclude": "email",
+                },
+                ["after.id", "after.username", "after.email", "after.created_at"],
+            ),
+            (
+                "io.debezium.connector.mongodb.MongoDbConnector",
+                {},
+                ["id", "username", "email", "created_at"],
+            ),
+        ],
+        ids=[
+            "envelope",
+            "unwrap",
+            "extract-field-after",
+            "replace-field-before-unwrap",
+            "mongodb",
+        ],
+    )
+    def test_fine_grained_lineage_generation(
+        self,
+        connector_class: str,
+        transforms: Dict[str, str],
+        expected_downstreams: List[str],
+    ) -> None:
         """Test generating fine-grained column-level lineage."""
         config = KafkaConnectSourceConfig(
             connect_uri="http://test:8083",
@@ -351,10 +407,11 @@ class TestSchemaResolverFineGrainedLineage:
             name="postgres-source",
             type="source",
             config={
-                "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+                "connector.class": connector_class,
                 "database.dbname": "testdb",
                 "table.include.list": "public.users",
                 "database.server.name": "testserver",
+                **transforms,
             },
             tasks=[],
         )
@@ -412,6 +469,12 @@ class TestSchemaResolverFineGrainedLineage:
         assert "username" in columns
         assert "email" in columns
         assert "created_at" in columns
+
+        downstreams = []
+        for lineage in result:
+            assert lineage.downstreams is not None
+            downstreams.append(lineage.downstreams[0].split(",")[-1].rstrip(")"))
+        assert downstreams == expected_downstreams
 
     def test_fine_grained_lineage_no_schema_metadata(self):
         """Test fine-grained lineage when schema metadata is unavailable."""

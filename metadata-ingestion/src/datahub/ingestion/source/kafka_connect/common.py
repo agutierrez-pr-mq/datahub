@@ -1084,20 +1084,25 @@ class BaseConnector:
             return []
 
     def _apply_field_transforms(
-        self, source_columns: List[str]
+        self, source_columns: List[str], nest_under: Optional[str] = None
     ) -> Dict[str, Optional[str]]:
         """Apply field-level SMT transforms to a column mapping (source → target name).
 
         Handles ReplaceField (include/exclude/rename), ExtractField (unwrap a nested
-        struct), and HoistField (wrap all fields under a new struct field).
+        struct), HoistField (wrap all fields under a new struct field), and
+        ExtractNewRecordState (unwrap a Debezium envelope).
+        `nest_under` places every column under that struct first (`after` for a
+        Debezium envelope).
         Returns a dict mapping each source column to its target name, or None if dropped.
         """
+        column_mapping: Dict[str, Optional[str]] = {
+            col: f"{nest_under}.{col}" if nest_under else col for col in source_columns
+        }
         transforms_config = self.connector_manifest.config.get("transforms", "")
         if not transforms_config:
-            return {col: col for col in source_columns}
+            return column_mapping
 
         transform_names = parse_comma_separated_list(transforms_config)
-        column_mapping: Dict[str, Optional[str]] = {col: col for col in source_columns}
 
         for transform_name in transform_names:
             transform_type = self.connector_manifest.config.get(
@@ -1124,6 +1129,12 @@ class BaseConnector:
                 column_mapping = self._apply_extract_field(
                     column_mapping, transform_cfg
                 )
+            elif transform_type == "io.debezium.transforms.ExtractNewRecordState":
+                # Like ExtractField(field=after); records that aren't envelopes pass through.
+                if any(t and t.startswith("after.") for t in column_mapping.values()):
+                    column_mapping = self._apply_extract_field(
+                        column_mapping, {"field": "after"}
+                    )
             elif transform_type in (
                 "org.apache.kafka.connect.transforms.HoistField$Value",
                 "org.apache.kafka.connect.transforms.HoistField$Key",
@@ -1212,6 +1223,10 @@ class BaseConnector:
             for col, target in column_mapping.items()
         }
 
+    def _emits_debezium_envelope(self) -> bool:
+        """True when topic values are Debezium change-event envelopes (columns under `after`)."""
+        return False
+
     def _extract_fine_grained_lineage(
         self,
         source_dataset: str,
@@ -1222,8 +1237,8 @@ class BaseConnector:
         """
         Extract column-level lineage using schema metadata from DataHub.
 
-        This unified implementation works for all source connectors that preserve
-        column names in a 1:1 mapping (e.g., Debezium connectors, JDBC polling connectors).
+        Source columns keep their names on the topic, under `after.` for Debezium
+        change-event envelopes, then go through the connector's field transforms.
 
         Args:
             source_dataset: Source table name (e.g., "database.schema.table")
@@ -1279,7 +1294,10 @@ class BaseConnector:
                 platform_instance=kafka_platform_instance,
             )
 
-            column_mapping = self._apply_field_transforms(list(source_schema.keys()))
+            column_mapping = self._apply_field_transforms(
+                list(source_schema.keys()),
+                nest_under="after" if self._emits_debezium_envelope() else None,
+            )
 
             # Create fine-grained lineage for each source column
             fine_grained_lineages: List[FineGrainedLineageClass] = []

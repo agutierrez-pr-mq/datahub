@@ -2191,6 +2191,15 @@ class DebeziumSourceConnector(BaseConnector):
         # Plain Debezium derives topics from table.include.list / SchemaResolver.
         return self._has_event_router_transform()
 
+    def _emits_debezium_envelope(self) -> bool:
+        # MongoDB writes `after` as a JSON string, not a struct of fields.
+        return (
+            self.connector_manifest.config.get(CONNECTOR_CLASS, "").startswith(
+                f"{DEBEZIUM_SOURCE_CONNECTOR_PREFIX}."
+            )
+            and self.get_platform() != "mongodb"
+        )
+
     @dataclass
     class DebeziumParser:
         source_platform: str

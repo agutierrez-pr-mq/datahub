@@ -531,6 +531,35 @@ def test_extract_field_unwraps_nested_struct():
     assert "op" not in result
 
 
+def test_extract_new_record_state_unwraps_envelope():
+    connector = _make_connector(
+        {
+            "transforms": "unwrap",
+            "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        }
+    )
+
+    result = connector._apply_field_transforms(
+        ["before.id", "after.id", "after.name", "op"]
+    )
+
+    assert result == {"after.id": "id", "after.name": "name"}
+
+
+def test_extract_new_record_state_passes_flat_fields_through():
+    """Records that aren't Debezium envelopes pass through unchanged."""
+    connector = _make_connector(
+        {
+            "transforms": "unwrap",
+            "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        }
+    )
+
+    result = connector._apply_field_transforms(["id", "name"])
+
+    assert result == {"id": "id", "name": "name"}
+
+
 def test_extract_field_no_matching_prefix():
     """ExtractField with a field name that matches nothing returns an empty mapping."""
     connector = _make_connector(

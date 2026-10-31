@@ -583,10 +583,13 @@ source:
   config:
     use_schema_resolver: true
     schema_resolver_finegrained_lineage: true
+# Debezium connector config:
+#   transforms: unwrap
+#   transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
 # Source table schema in DataHub:
 # postgres.public.users: [user_id, email, created_at, updated_at]
 
-# Kafka topic schema in DataHub:
+# Kafka topic schema in DataHub (unwrapped row):
 # kafka.server.public.users: [user_id, email, created_at, updated_at]
 
 # Result: Column-level lineage created:
@@ -594,7 +597,14 @@ source:
 #   postgres.public.users.email -> kafka.server.public.users.email
 #   postgres.public.users.created_at -> kafka.server.public.users.created_at
 #   postgres.public.users.updated_at -> kafka.server.public.users.updated_at
+
+# Without the unwrap transform, the topic holds the change-event envelope:
+#   postgres.public.users.user_id -> kafka.server.public.users.after.user_id
 ```
+
+**Debezium change-event envelopes:**
+
+Relational Debezium source connectors write change-event envelopes (`{before, after, source, op, ts_ms}`), so column lineage maps each column to `after.<column>` unless `ExtractNewRecordState` or `ExtractField$Value` with `field=after` unwraps the envelope. MongoDB connectors write `after` as a JSON string, so their fields are not mapped into it.
 
 Column matching is case-insensitive, so Kafka fields with lowercase names (e.g. `order_id`) will match Snowflake columns stored in uppercase (`ORDER_ID`).
 
@@ -608,6 +618,7 @@ The following field-level transforms are applied when building the column mappin
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `ReplaceField$Value`                  | include/exclude filter and field renames are respected                                                |
 | `ExtractField$Value`                  | sub-fields of the extracted struct are promoted as top-level (e.g. Debezium `field=after` unwrapping) |
+| `ExtractNewRecordState` (Debezium)    | `after.*` fields are promoted as top-level, like `ExtractField$Value` with `field=after`              |
 | `HoistField$Value`                    | all fields are nested under the new struct field (e.g. `id` → `data.id`)                              |
 | `Flatten$Value`                       | nested struct paths are joined using the configured delimiter (default: `.`)                          |
 | `MaskField`, `Cast`, `Filter`, `Drop` | field names unchanged — lineage is unaffected                                                         |

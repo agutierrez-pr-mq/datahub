@@ -1007,6 +1007,9 @@ def test_kafka_connect_column_lineage_source_and_sink(
                     "table.include.list": "public.orders",
                     "plugin.name": "pgoutput",
                     "slot.name": "debezium_slot",
+                    # Unwrapped, matching the flat topic schema below.
+                    "transforms": "unwrap",
+                    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
                 },
                 "tasks": [],
                 "type": "source",
